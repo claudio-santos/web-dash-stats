@@ -7,8 +7,34 @@
   <link href="/static/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="container py-5">
-  <h1 class="mb-4">System Usage</h1>
+  <h1 class="mb-4">System Dashboard</h1>
 
+  <!-- System Information Card -->
+  <div class="card mb-4">
+    <div class="card-header">System Info</div>
+    <div class="card-body">
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Hostname</strong>
+          <span id="hostname">Loading...</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Platform</strong>
+          <span id="platform">Loading...</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>CPU Model</strong>
+          <span id="cpu-model">Loading...</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Uptime</strong>
+          <span id="uptime">Loading...</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- CPU Usage Card -->
   <div class="card mb-3">
     <div class="card-header">CPU Usage</div>
     <div class="card-body">
@@ -16,20 +42,62 @@
     </div>
   </div>
 
-  <div class="card">
+  <!-- Memory Usage Card -->
+  <div class="card mb-3">
     <div class="card-header">Memory Usage</div>
     <div class="card-body">
       <h2 id="mem" class="display-6">Loading...</h2>
     </div>
   </div>
 
+  <!-- Network Usage Card -->
+  <div class="card">
+    <div class="card-header">Network Usage</div>
+    <div class="card-body">
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Downloaded</strong>
+          <span id="rx">0 MB</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Download Speed</strong>
+          <span id="rate-rx">0.00 MB/s</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Uploaded</strong>
+          <span id="tx">0 MB</span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <strong>Upload Speed</strong>
+          <span id="rate-tx">0.00 MB/s</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- SSE Script -->
   <script>
     const eventSource = new EventSource("/events");
 
+    function formatBytesToMB(bytes) {
+      return (bytes / (1024 * 1024)).toFixed(2);
+    }
+
     eventSource.onmessage = function(event) {
       const data = JSON.parse(event.data);
+
       document.getElementById("cpu").textContent = data.cpu.toFixed(2) + "%";
       document.getElementById("mem").textContent = data.mem.toFixed(2) + "%";
+
+      document.getElementById("hostname").textContent = data.hostname;
+      document.getElementById("platform").textContent = data.platform;
+      document.getElementById("cpu-model").textContent = data.cpu_model;
+      document.getElementById("uptime").textContent = data.uptime;
+
+      document.getElementById("rx").textContent = formatBytesToMB(data.rx) + " MB";
+      document.getElementById("tx").textContent = formatBytesToMB(data.tx) + " MB";
+      document.getElementById("rate-rx").textContent = formatBytesToMB(data.rateRx) + " MB/s";
+      document.getElementById("rate-tx").textContent = formatBytesToMB(data.rateTx) + " MB/s";
     };
 
     eventSource.onerror = function(err) {
@@ -37,6 +105,7 @@
     };
   </script>
 
+  <!-- Bootstrap JS -->
   <script src="/static/bootstrap.bundle.min.js"></script>
 </body>
 </html>
