@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -65,31 +66,38 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 			v, _ := mem.VirtualMemory()
 			cpuPercent, _ := cpu.Percent(time.Second, false)
 
-			ioCounters, _ := net.IOCounters(false)
+			// Get all network interfaces
+			ioCounters, _ := net.IOCounters(true)
 			var rx, tx uint64 = 0, 0
-			if len(ioCounters) > 0 {
-				rx = ioCounters[0].BytesRecv
-				tx = ioCounters[0].BytesSent
+
+			// Sum all interfaces
+			for _, counter := range ioCounters {
+				rx += counter.BytesRecv
+				tx += counter.BytesSent
 			}
 
+			// Calculate rate per second
 			rateRx := rx - lastRx
 			rateTx := tx - lastTx
-
-			lastRx = rx
-			lastTx = tx
+			lastRx, lastTx = rx, tx
 
 			uptimeSec := time.Now().Unix() - int64(bootTime)
 			uptime := prettyUptime(uptimeSec)
 
-			fmt.Fprintf(w, "data: {\"mem\": %.2f, \"cpu\": %.2f, \"platform\": \"%s/%s\", \"uptime\": \"%s\", \"hostname\": \"%s\", \"cpu_model\": \"%s\", \"rx\": %d, \"tx\": %d, \"rateRx\": %d, \"rateTx\": %d}\n\n",
-				v.UsedPercent, cpuPercent[0],
-				osType, arch,
-				uptime,
-				hostname,
-				cpuModel,
-				rx, tx,
-				rateRx, rateTx,
-			)
+			data := map[string]any{
+				"mem":       v.UsedPercent,
+				"cpu":       cpuPercent[0],
+				"platform":  fmt.Sprintf("%s/%s", osType, arch),
+				"uptime":    uptime,
+				"hostname":  hostname,
+				"cpu_model": cpuModel,
+				"rx":        rx,
+				"tx":        tx,
+				"rateRx":    rateRx,
+				"rateTx":    rateTx,
+			}
+			jsonBytes, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: %s\n\n", jsonBytes)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
