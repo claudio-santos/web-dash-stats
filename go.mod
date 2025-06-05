@@ -2,7 +2,10 @@ module github.com/claudio-santos/web-dash-stats
 
 go 1.24.3
 
-require github.com/shirou/gopsutil/v4 v4.25.5
+require (
+	github.com/shirou/gopsutil/v4 v4.25.5
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/ebitengine/purego v0.8.4 // indirect

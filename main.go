@@ -16,11 +16,11 @@ import (
 	"github.com/shirou/gopsutil/v4/net"
 )
 
+// prettyUptime returns uptime as "Xd Yh Zm"
 func prettyUptime(seconds int64) string {
 	days := seconds / (24 * 3600)
 	hours := (seconds % (24 * 3600)) / 3600
 	minutes := (seconds % 3600) / 60
-
 	var parts []string
 	if days > 0 {
 		parts = append(parts, fmt.Sprintf("%dd", days))
@@ -29,56 +29,73 @@ func prettyUptime(seconds int64) string {
 		parts = append(parts, fmt.Sprintf("%dh", hours))
 	}
 	parts = append(parts, fmt.Sprintf("%dm", minutes))
-
 	return strings.Join(parts, " ")
 }
 
+// sendSSE sends a Server-Sent Event to the client and flushes the response.
+func sendSSE(w http.ResponseWriter, flusher http.Flusher, eventType string, data any, name ...string) {
+	dataBytes, _ := json.Marshal(data)
+	var payload string
+	if len(name) == 1 {
+		payload = fmt.Sprintf("data: {\"type\":\"%s\",\"name\":\"%s\",\"data\":%s}\n\n", eventType, name[0], dataBytes)
+	} else {
+		payload = fmt.Sprintf("data: {\"type\":\"%s\",\"data\":%s}\n\n", eventType, dataBytes)
+	}
+	fmt.Fprint(w, payload)
+	flusher.Flush()
+}
+
+// checkServiceAndSend checks a service URL and sends its status as SSE.
+func checkServiceAndSend(w http.ResponseWriter, flusher http.Flusher, name, url string, timeout time.Duration) {
+	status := "down"
+	client := http.Client{Timeout: timeout}
+	resp, err := client.Get(url)
+	if err == nil && resp.StatusCode == 200 {
+		status = "up"
+	}
+	data := map[string]any{"status": status}
+	sendSSE(w, flusher, "service", data, name)
+}
+
+// sseHandler streams system and service stats to the frontend via SSE.
 func sseHandler(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	bootTime, err := host.BootTime()
-	if err != nil {
-		http.Error(w, "Could not get boot time", http.StatusInternalServerError)
-		return
-	}
+	bootTime, _ := host.BootTime()
 	osType := runtime.GOOS
 	arch := runtime.GOARCH
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "Unknown"
-	}
-	cpuInfo, err := cpu.Info()
+	hostname, _ := os.Hostname()
+	cpuInfo, _ := cpu.Info()
 	cpuModel := "Unknown"
-	if err == nil && len(cpuInfo) > 0 {
+	if len(cpuInfo) > 0 {
 		cpuModel = cpuInfo[0].ModelName
 	}
 
-	// Send system info once
+	// Initial info sent to frontend
 	sysInfo := map[string]any{
 		"hostname":  hostname,
 		"platform":  fmt.Sprintf("%s/%s", osType, arch),
 		"cpu_model": cpuModel,
 	}
-	sysInfoBytes, _ := json.Marshal(sysInfo)
-	fmt.Fprintf(w, "data: {\"type\":\"sysinfo\",\"data\":%s}\n\n", sysInfoBytes)
-	flusher.Flush()
+	sendSSE(w, flusher, "sysinfo", sysInfo)
+	sendSSE(w, flusher, "services", services)
+	uptimeSec := time.Now().Unix() - int64(bootTime)
+	uptime := prettyUptime(uptimeSec)
+	sendSSE(w, flusher, "uptime", map[string]any{"uptime": uptime})
 
-	// Initialize lastRx and lastTx to avoid spike on first update
-	ioCounters, err := net.IOCounters(true)
-	var lastRx, lastTx uint64 = 0, 0
-	if err == nil {
-		for _, counter := range ioCounters {
-			lastRx += counter.BytesRecv
-			lastTx += counter.BytesSent
-		}
+	// Track network counters for rate calculation
+	ioCounters, _ := net.IOCounters(true)
+	var lastRx, lastTx uint64
+	for _, counter := range ioCounters {
+		lastRx += counter.BytesRecv
+		lastTx += counter.BytesSent
 	}
 
 	networkTicker := time.NewTicker(1 * time.Second)
@@ -89,84 +106,75 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 	defer memTicker.Stop()
 	uptimeTicker := time.NewTicker(1 * time.Minute)
 	defer uptimeTicker.Stop()
+	serviceTicker := time.NewTicker(5 * time.Minute)
+	defer serviceTicker.Stop()
 
+	// Initial service status check
+	for _, svc := range services {
+		checkServiceAndSend(w, flusher, svc.Name, svc.URL, 2*time.Second)
+	}
+
+	// Main event loop: send updates on each ticker
 	for {
 		select {
 		case <-cpuTicker.C:
 			cpuPercent, err := cpu.Percent(0, false)
-			if err != nil || len(cpuPercent) == 0 {
-				continue
+			if err == nil && len(cpuPercent) > 0 {
+				sendSSE(w, flusher, "cpu", map[string]any{"cpu": cpuPercent[0]})
 			}
-			data := map[string]any{
-				"cpu": cpuPercent[0],
-			}
-			jsonBytes, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: {\"type\":\"cpu\",\"data\":%s}\n\n", jsonBytes)
-			flusher.Flush()
-
 		case <-memTicker.C:
 			v, err := mem.VirtualMemory()
-			if err != nil {
-				continue
+			if err == nil {
+				sendSSE(w, flusher, "mem", map[string]any{"mem": v.UsedPercent})
 			}
-			data := map[string]any{
-				"mem": v.UsedPercent,
-			}
-			jsonBytes, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: {\"type\":\"mem\",\"data\":%s}\n\n", jsonBytes)
-			flusher.Flush()
-
 		case <-uptimeTicker.C:
 			uptimeSec := time.Now().Unix() - int64(bootTime)
 			uptime := prettyUptime(uptimeSec)
-			data := map[string]any{
-				"uptime": uptime,
-			}
-			jsonBytes, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: {\"type\":\"uptime\",\"data\":%s}\n\n", jsonBytes)
-			flusher.Flush()
-
+			sendSSE(w, flusher, "uptime", map[string]any{"uptime": uptime})
 		case <-networkTicker.C:
 			ioCounters, err := net.IOCounters(true)
-			if err != nil {
-				continue
+			if err == nil {
+				var rx, tx uint64
+				for _, counter := range ioCounters {
+					rx += counter.BytesRecv
+					tx += counter.BytesSent
+				}
+				rateRx := rx - lastRx
+				rateTx := tx - lastTx
+				lastRx, lastTx = rx, tx
+				sendSSE(w, flusher, "network", map[string]any{
+					"rx":     rx,
+					"tx":     tx,
+					"rateRx": float64(rateRx),
+					"rateTx": float64(rateTx),
+				})
 			}
-			var rx, tx uint64 = 0, 0
-			for _, counter := range ioCounters {
-				rx += counter.BytesRecv
-				tx += counter.BytesSent
+		case <-serviceTicker.C:
+			for _, svc := range services {
+				checkServiceAndSend(w, flusher, svc.Name, svc.URL, 2*time.Second)
 			}
-			rateRx := rx - lastRx
-			rateTx := tx - lastTx
-			lastRx, lastTx = rx, tx
-
-			data := map[string]any{
-				"rx":     rx,
-				"tx":     tx,
-				"rateRx": float64(rateRx), // bytes/sec
-				"rateTx": float64(rateTx),
-			}
-			jsonBytes, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: {\"type\":\"network\",\"data\":%s}\n\n", jsonBytes)
-			flusher.Flush()
-
 		case <-r.Context().Done():
 			return
 		}
 	}
 }
 
+var services []Service
+
 func main() {
-	// Serve static files from /static
+	// Load services from config.yaml
+	cfg, err := LoadConfig("config.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	services = cfg.Services
+
+	// Serve static files and dashboard
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
-
-	// Serve HTML templates from /templates
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "templates/index.html")
 	})
-
-	// SSE endpoint
 	http.HandleFunc("/events", sseHandler)
 
 	log.Println("Starting server at :3333")
