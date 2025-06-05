@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>System Metrics</title>
+  <title>📊 Web Dashboard Stats</title>
   <link href="/static/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="container py-5">
-  <h1 class="mb-4">System Dashboard</h1>
+  <h1 class="mb-4">📊 Web Dashboard Stats</h1>
 
   <!-- System Information Card -->
   <div class="card mb-4">
@@ -38,7 +38,13 @@
   <div class="card mb-3">
     <div class="card-header">CPU Usage</div>
     <div class="card-body">
-      <h2 id="cpu" class="display-6">Loading...</h2>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span>Usage</span>
+        <span id="cpu-val">0%</span>
+      </div>
+      <div class="progress" style="height: 1.5rem;">
+        <div id="cpu-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+      </div>
     </div>
   </div>
 
@@ -46,7 +52,13 @@
   <div class="card mb-3">
     <div class="card-header">Memory Usage</div>
     <div class="card-body">
-      <h2 id="mem" class="display-6">Loading...</h2>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span>Usage</span>
+        <span id="mem-val">0%</span>
+      </div>
+      <div class="progress" style="height: 1.5rem;">
+        <div id="mem-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+      </div>
     </div>
   </div>
 
@@ -75,48 +87,79 @@
     </div>
   </div>
 
-  <!-- SSE Script -->
   <script>
-    const eventSource = new EventSource("/events");
+  const eventSource = new EventSource("/events");
 
-    function formatBytesToMB(bytes) {
-      return (bytes / (1024 * 1024)).toFixed(2);
+  function formatBytes(bytes) {
+    const gb = 1024 * 1024 * 1024;
+    const mb = 1024 * 1024;
+    if (bytes >= gb) {
+      return (bytes / gb).toFixed(2) + " GB";
     }
+    return (bytes / mb).toFixed(2) + " MB";
+  }
 
-    eventSource.onmessage = function(event) {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch (e) {
-        console.error("Failed to parse SSE event:", event.data, e);
-        return;
+  function formatRate(bytesPerSec) {
+    const gb = 1024 * 1024 * 1024;
+    const mb = 1024 * 1024;
+    if (bytesPerSec >= gb) {
+      return (bytesPerSec / gb).toFixed(2) + " GB/s";
+    }
+    return (bytesPerSec / mb).toFixed(2) + " MB/s";
+  }
+
+  // Set progress bar color and width based on percent
+  function setBar(bar, percent) {
+    bar.style.width = percent + "%";
+    bar.classList.remove("bg-success", "bg-warning", "bg-danger");
+    if (percent < 50) {
+      bar.classList.add("bg-success");
+    } else if (percent < 80) {
+      bar.classList.add("bg-warning");
+    } else {
+      bar.classList.add("bg-danger");
+    }
+  }
+
+  eventSource.onmessage = function(event) {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (e) {
+      return;
+    }
+    const data = msg.data || {};
+
+    if (msg.type === "sysinfo") {
+      if (data.hostname) document.getElementById("hostname").textContent = data.hostname;
+      if (data.platform) document.getElementById("platform").textContent = data.platform;
+      if (data.cpu_model) document.getElementById("cpu-model").textContent = data.cpu_model;
+    } else if (msg.type === "cpu") {
+      if (typeof data.cpu === "number") {
+        const val = data.cpu.toFixed(2);
+        document.getElementById("cpu-val").textContent = val + "%";
+        setBar(document.getElementById("cpu-bar"), val);
       }
-      const data = msg.data || {};
-
-      if (msg.type === "sysinfo") {
-        if (data.hostname) document.getElementById("hostname").textContent = data.hostname;
-        if (data.platform) document.getElementById("platform").textContent = data.platform;
-        if (data.cpu_model) document.getElementById("cpu-model").textContent = data.cpu_model;
-      } else if (msg.type === "cpu") {
-        if (typeof data.cpu === "number") document.getElementById("cpu").textContent = data.cpu.toFixed(2) + "%";
-      } else if (msg.type === "mem") {
-        if (typeof data.mem === "number") document.getElementById("mem").textContent = data.mem.toFixed(2) + "%";
-      } else if (msg.type === "uptime") {
-        if (data.uptime) document.getElementById("uptime").textContent = data.uptime;
-      } else if (msg.type === "network") {
-        if (typeof data.rx === "number") document.getElementById("rx").textContent = formatBytesToMB(data.rx) + " MB";
-        if (typeof data.tx === "number") document.getElementById("tx").textContent = formatBytesToMB(data.tx) + " MB";
-        if (typeof data.rateRx === "number") document.getElementById("rate-rx").textContent = formatBytesToMB(data.rateRx) + " MB/s";
-        if (typeof data.rateTx === "number") document.getElementById("rate-tx").textContent = formatBytesToMB(data.rateTx) + " MB/s";
+    } else if (msg.type === "mem") {
+      if (typeof data.mem === "number") {
+        const val = data.mem.toFixed(2);
+        document.getElementById("mem-val").textContent = val + "%";
+        setBar(document.getElementById("mem-bar"), val);
       }
-    };
+    } else if (msg.type === "uptime") {
+      if (data.uptime) document.getElementById("uptime").textContent = data.uptime;
+    } else if (msg.type === "network") {
+      if (typeof data.rx === "number") document.getElementById("rx").textContent = formatBytes(data.rx);
+      if (typeof data.tx === "number") document.getElementById("tx").textContent = formatBytes(data.tx);
+      if (typeof data.rateRx === "number") document.getElementById("rate-rx").textContent = formatRate(data.rateRx);
+      if (typeof data.rateTx === "number") document.getElementById("rate-tx").textContent = formatRate(data.rateTx);
+    }
+  };
 
-    eventSource.onerror = function(err) {
-      console.error("EventSource failed:", err);
-    };
-  </script>
-
-  <!-- Bootstrap JS -->
+  eventSource.onerror = function(err) {
+    console.error("EventSource failed:", err);
+  };
+</script>
   <script src="/static/bootstrap.bundle.min.js"></script>
 </body>
 </html>
