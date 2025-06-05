@@ -84,20 +84,31 @@
     }
 
     eventSource.onmessage = function(event) {
-      const data = JSON.parse(event.data);
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (e) {
+        console.error("Failed to parse SSE event:", event.data, e);
+        return;
+      }
+      const data = msg.data || {};
 
-      document.getElementById("cpu").textContent = data.cpu.toFixed(2) + "%";
-      document.getElementById("mem").textContent = data.mem.toFixed(2) + "%";
-
-      document.getElementById("hostname").textContent = data.hostname;
-      document.getElementById("platform").textContent = data.platform;
-      document.getElementById("cpu-model").textContent = data.cpu_model;
-      document.getElementById("uptime").textContent = data.uptime;
-
-      document.getElementById("rx").textContent = formatBytesToMB(data.rx) + " MB";
-      document.getElementById("tx").textContent = formatBytesToMB(data.tx) + " MB";
-      document.getElementById("rate-rx").textContent = formatBytesToMB(data.rateRx) + " MB/s";
-      document.getElementById("rate-tx").textContent = formatBytesToMB(data.rateTx) + " MB/s";
+      if (msg.type === "sysinfo") {
+        if (data.hostname) document.getElementById("hostname").textContent = data.hostname;
+        if (data.platform) document.getElementById("platform").textContent = data.platform;
+        if (data.cpu_model) document.getElementById("cpu-model").textContent = data.cpu_model;
+      } else if (msg.type === "cpu") {
+        if (typeof data.cpu === "number") document.getElementById("cpu").textContent = data.cpu.toFixed(2) + "%";
+      } else if (msg.type === "mem") {
+        if (typeof data.mem === "number") document.getElementById("mem").textContent = data.mem.toFixed(2) + "%";
+      } else if (msg.type === "uptime") {
+        if (data.uptime) document.getElementById("uptime").textContent = data.uptime;
+      } else if (msg.type === "network") {
+        if (typeof data.rx === "number") document.getElementById("rx").textContent = formatBytesToMB(data.rx) + " MB";
+        if (typeof data.tx === "number") document.getElementById("tx").textContent = formatBytesToMB(data.tx) + " MB";
+        if (typeof data.rateRx === "number") document.getElementById("rate-rx").textContent = formatBytesToMB(data.rateRx) + " MB/s";
+        if (typeof data.rateTx === "number") document.getElementById("rate-tx").textContent = formatBytesToMB(data.rateTx) + " MB/s";
+      }
     };
 
     eventSource.onerror = function(err) {

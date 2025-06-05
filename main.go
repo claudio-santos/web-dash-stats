@@ -44,61 +44,112 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	bootTime, _ := host.BootTime()
+	bootTime, err := host.BootTime()
+	if err != nil {
+		http.Error(w, "Could not get boot time", http.StatusInternalServerError)
+		return
+	}
 	osType := runtime.GOOS
 	arch := runtime.GOARCH
-	hostname, _ := os.Hostname()
-
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "Unknown"
+	}
 	cpuInfo, err := cpu.Info()
-	var cpuModel string = "Unknown"
+	cpuModel := "Unknown"
 	if err == nil && len(cpuInfo) > 0 {
 		cpuModel = cpuInfo[0].ModelName
 	}
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	// Send system info once
+	sysInfo := map[string]any{
+		"hostname":  hostname,
+		"platform":  fmt.Sprintf("%s/%s", osType, arch),
+		"cpu_model": cpuModel,
+	}
+	sysInfoBytes, _ := json.Marshal(sysInfo)
+	fmt.Fprintf(w, "data: {\"type\":\"sysinfo\",\"data\":%s}\n\n", sysInfoBytes)
+	flusher.Flush()
 
+	// Initialize lastRx and lastTx to avoid spike on first update
+	ioCounters, err := net.IOCounters(true)
 	var lastRx, lastTx uint64 = 0, 0
+	if err == nil {
+		for _, counter := range ioCounters {
+			lastRx += counter.BytesRecv
+			lastTx += counter.BytesSent
+		}
+	}
+
+	networkTicker := time.NewTicker(1 * time.Second)
+	defer networkTicker.Stop()
+	cpuTicker := time.NewTicker(1 * time.Second)
+	defer cpuTicker.Stop()
+	memTicker := time.NewTicker(1 * time.Second)
+	defer memTicker.Stop()
+	uptimeTicker := time.NewTicker(1 * time.Minute)
+	defer uptimeTicker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			v, _ := mem.VirtualMemory()
-			cpuPercent, _ := cpu.Percent(time.Second, false)
+		case <-cpuTicker.C:
+			cpuPercent, err := cpu.Percent(0, false)
+			if err != nil || len(cpuPercent) == 0 {
+				continue
+			}
+			data := map[string]any{
+				"cpu": cpuPercent[0],
+			}
+			jsonBytes, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: {\"type\":\"cpu\",\"data\":%s}\n\n", jsonBytes)
+			flusher.Flush()
 
-			// Get all network interfaces
-			ioCounters, _ := net.IOCounters(true)
+		case <-memTicker.C:
+			v, err := mem.VirtualMemory()
+			if err != nil {
+				continue
+			}
+			data := map[string]any{
+				"mem": v.UsedPercent,
+			}
+			jsonBytes, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: {\"type\":\"mem\",\"data\":%s}\n\n", jsonBytes)
+			flusher.Flush()
+
+		case <-uptimeTicker.C:
+			uptimeSec := time.Now().Unix() - int64(bootTime)
+			uptime := prettyUptime(uptimeSec)
+			data := map[string]any{
+				"uptime": uptime,
+			}
+			jsonBytes, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: {\"type\":\"uptime\",\"data\":%s}\n\n", jsonBytes)
+			flusher.Flush()
+
+		case <-networkTicker.C:
+			ioCounters, err := net.IOCounters(true)
+			if err != nil {
+				continue
+			}
 			var rx, tx uint64 = 0, 0
-
-			// Sum all interfaces
 			for _, counter := range ioCounters {
 				rx += counter.BytesRecv
 				tx += counter.BytesSent
 			}
-
-			// Calculate rate per second
 			rateRx := rx - lastRx
 			rateTx := tx - lastTx
 			lastRx, lastTx = rx, tx
 
-			uptimeSec := time.Now().Unix() - int64(bootTime)
-			uptime := prettyUptime(uptimeSec)
-
 			data := map[string]any{
-				"mem":       v.UsedPercent,
-				"cpu":       cpuPercent[0],
-				"platform":  fmt.Sprintf("%s/%s", osType, arch),
-				"uptime":    uptime,
-				"hostname":  hostname,
-				"cpu_model": cpuModel,
-				"rx":        rx,
-				"tx":        tx,
-				"rateRx":    rateRx,
-				"rateTx":    rateTx,
+				"rx":     rx,
+				"tx":     tx,
+				"rateRx": float64(rateRx), // bytes/sec
+				"rateTx": float64(rateTx),
 			}
 			jsonBytes, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: %s\n\n", jsonBytes)
+			fmt.Fprintf(w, "data: {\"type\":\"network\",\"data\":%s}\n\n", jsonBytes)
 			flusher.Flush()
+
 		case <-r.Context().Done():
 			return
 		}
