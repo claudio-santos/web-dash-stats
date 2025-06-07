@@ -9,9 +9,9 @@
 <body class="container py-5">
   <h1 class="mb-4">📊 Web Dashboard Stats</h1>
 
-  <!-- System Information -->
+  <!-- System -->
   <div class="card mb-4">
-    <div class="card-header">System Info</div>
+    <div class="card-header">System</div>
     <div class="card-body">
       <ul class="list-group list-group-flush">
         <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -34,9 +34,9 @@
     </div>
   </div>
 
-  <!-- CPU Usage -->
+  <!-- CPU -->
   <div class="card mb-3">
-    <div class="card-header">CPU Usage</div>
+    <div class="card-header">CPU</div>
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <span>Usage</span>
@@ -48,13 +48,13 @@
     </div>
   </div>
 
-  <!-- Memory Usage -->
+  <!-- Memory -->
   <div class="card mb-3">
-    <div class="card-header">Memory Usage</div>
+    <div class="card-header">Memory</div>
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <span>Usage</span>
-        <span id="mem-val">0%</span>
+        <span id="mem-usage">-</span>
       </div>
       <div class="progress" style="height: 1.5rem;">
         <div id="mem-bar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
@@ -62,28 +62,38 @@
     </div>
   </div>
 
-  <!-- Network Usage -->
-  <div class="card">
-    <div class="card-header">Network Usage</div>
+  <!-- Network -->
+  <div class="card mb-3">
+    <div class="card-header">Network</div>
     <div class="card-body">
       <ul class="list-group list-group-flush">
         <li class="list-group-item d-flex justify-content-between align-items-center">
-          <strong>Downloaded</strong>
-          <span id="rx">0 MB</span>
+          <span><strong>Upload</strong></span>
+          <span>
+            <span class="me-1">&#8593;</span>
+            <span id="rate-tx">0.00 bps</span>
+            &nbsp;/&nbsp;
+            <span id="tx">0 MB</span>
+          </span>
         </li>
         <li class="list-group-item d-flex justify-content-between align-items-center">
-          <strong>Download Speed</strong>
-          <span id="rate-rx">0.00 MB/s</span>
-        </li>
-        <li class="list-group-item d-flex justify-content-between align-items-center">
-          <strong>Uploaded</strong>
-          <span id="tx">0 MB</span>
-        </li>
-        <li class="list-group-item d-flex justify-content-between align-items-center">
-          <strong>Upload Speed</strong>
-          <span id="rate-tx">0.00 MB/s</span>
+          <span><strong>Download</strong></span>
+          <span>
+            <span class="me-1">&#8595;</span>
+            <span id="rate-rx">0.00 bps</span>
+            &nbsp;/&nbsp;
+            <span id="rx">0 MB</span>
+          </span>
         </li>
       </ul>
+    </div>
+  </div>
+
+  <!-- Storage -->
+  <div class="card mb-3">
+    <div class="card-header">Storage</div>
+    <div class="card-body" id="storage-list">
+      <div class="text-secondary small">Loading...</div>
     </div>
   </div>
 
@@ -91,99 +101,158 @@
   <div class="row mt-3 mb-3" id="service-cards"></div>
 
   <script>
-  const eventSource = new EventSource("/events");
+const eventSource = new EventSource("/events");
 
-  function formatBytes(bytes) {
-    const gb = 1024 * 1024 * 1024;
-    const mb = 1024 * 1024;
-    if (bytes >= gb) return (bytes / gb).toFixed(2) + " GB";
-    return (bytes / mb).toFixed(2) + " MB";
-  }
+function formatBytes(bytes) {
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  if (bytes >= gb) return (bytes / gb).toFixed(2) + " GB";
+  return (bytes / mb).toFixed(2) + " MB";
+}
 
-  function formatRate(bytesPerSec) {
-    const gb = 1024 * 1024 * 1024;
-    const mb = 1024 * 1024;
-    if (bytesPerSec >= gb) return (bytesPerSec / gb).toFixed(2) + " GB/s";
-    return (bytesPerSec / mb).toFixed(2) + " MB/s";
-  }
+function formatRate(bytesPerSec) {
+  const bps = bytesPerSec * 8;
+  if (bps >= 1e6) return (bps / 1e6).toFixed(2) + " Mbps";
+  if (bps >= 1e3) return (bps / 1e3).toFixed(2) + " Kbps";
+  return bps.toFixed(0) + " bps";
+}
 
-  // Update Bootstrap progress bar color and width
-  function setBar(bar, percent) {
-    bar.style.width = percent + "%";
-    bar.classList.remove("bg-success", "bg-warning", "bg-danger");
-    if (percent < 50) bar.classList.add("bg-success");
-    else if (percent < 80) bar.classList.add("bg-warning");
-    else bar.classList.add("bg-danger");
-  }
+function formatStorage(bytes) {
+  const gb = 1024 * 1024 * 1024;
+  if (bytes >= gb) return (bytes / gb).toFixed(2) + " GB";
+  return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+}
 
-  // Generate service cards from backend config
-  function createServiceCards(services) {
-    const container = document.getElementById("service-cards");
-    container.innerHTML = "";
-    services.forEach(service => {
-      const id = "service-" + service.name.toLowerCase();
-      const col = document.createElement("div");
-      col.className = "col-6 col-md-3";
-      col.innerHTML = `
-        <div class="card mb-3">
-          <div class="card-header">${service.name}</div>
-          <div class="card-body d-flex justify-content-center align-items-center" style="height:3rem;">
-            <span id="${id}" class="text-secondary small">Checking...</span>
-          </div>
+function setBar(bar, percent) {
+  if (!bar) return;
+  bar.style.width = percent + "%";
+  bar.classList.remove("bg-success", "bg-warning", "bg-danger");
+  if (percent < 50) bar.classList.add("bg-success");
+  else if (percent < 80) bar.classList.add("bg-warning");
+  else bar.classList.add("bg-danger");
+}
+
+function createServiceCards(services) {
+  const container = document.getElementById("service-cards");
+  container.innerHTML = "";
+  services.forEach(service => {
+    const id = "service-" + service.name.toLowerCase();
+    const col = document.createElement("div");
+    col.className = "col-6 col-md-3";
+    col.innerHTML = `
+      <div class="card mb-3">
+        <div class="card-header">${service.name}</div>
+        <div class="card-body d-flex justify-content-center align-items-center" style="height:3rem;">
+          <span id="${id}" class="text-secondary small">Checking...</span>
         </div>
-      `;
-      container.appendChild(col);
-    });
+      </div>
+    `;
+    container.appendChild(col);
+  });
+}
+
+function updateStorage(drives) {
+  const container = document.getElementById("storage-list");
+  if (!drives || drives.length === 0) {
+    container.innerHTML = '<div class="text-secondary small">No drives found</div>';
+    return;
   }
+  container.innerHTML = `
+    <ul class="list-group list-group-flush">
+      ${drives.map(drive => {
+        const percent = drive.percent.toFixed(1);
+        const used = formatStorage(drive.used);
+        const total = formatStorage(drive.total);
+        const barId = "storage-bar-" + drive.mount.replace(/[^a-zA-Z0-9]/g, "");
+        return `
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="fw-semibold">${drive.mount}</span>
+              <span>${used} / ${total} (${percent}%)</span>
+            </div>
+            <div class="progress" style="height: 1.5rem;">
+              <div id="${barId}" class="progress-bar" role="progressbar" style="width: ${percent}%"></div>
+            </div>
+          </li>
+        `;
+      }).join('')}
+    </ul>
+  `;
+  setTimeout(() => {
+    drives.forEach(drive => {
+      const barId = "storage-bar-" + drive.mount.replace(/[^a-zA-Z0-9]/g, "");
+      setBar(document.getElementById(barId), drive.percent.toFixed(1));
+    });
+  }, 0);
+}
 
-  eventSource.onmessage = function(event) {
-    let msg;
-    try { msg = JSON.parse(event.data); } catch { return; }
-    const data = msg.data || {};
+eventSource.onmessage = function(event) {
+  let msg;
+  try { msg = JSON.parse(event.data); } catch { return; }
+  const data = msg.data || {};
 
-    if (msg.type === "sysinfo") {
+  switch (msg.type) {
+    case "sysinfo":
       if (data.hostname) document.getElementById("hostname").textContent = data.hostname;
       if (data.platform) document.getElementById("platform").textContent = data.platform;
       if (data.cpu_model) document.getElementById("cpu-model").textContent = data.cpu_model;
-    } else if (msg.type === "cpu") {
+      break;
+    case "cpu":
       if (typeof data.cpu === "number") {
         const val = data.cpu.toFixed(2);
         document.getElementById("cpu-val").textContent = val + "%";
         setBar(document.getElementById("cpu-bar"), val);
       }
-    } else if (msg.type === "mem") {
-      if (typeof data.mem === "number") {
-        const val = data.mem.toFixed(2);
-        document.getElementById("mem-val").textContent = val + "%";
-        setBar(document.getElementById("mem-bar"), val);
+      break;
+    case "mem":
+      if (typeof data.mem === "number" && typeof data.used === "number" && typeof data.total === "number") {
+        const percent = data.mem.toFixed(2);
+        document.getElementById("mem-usage").textContent =
+          `${formatStorage(data.used)} / ${formatStorage(data.total)} (${percent}%)`;
+        setBar(document.getElementById("mem-bar"), percent);
       }
-    } else if (msg.type === "uptime") {
+      break;
+    case "uptime":
       if (data.uptime) document.getElementById("uptime").textContent = data.uptime;
-    } else if (msg.type === "network") {
+      break;
+    case "network":
       if (typeof data.rx === "number") document.getElementById("rx").textContent = formatBytes(data.rx);
       if (typeof data.tx === "number") document.getElementById("tx").textContent = formatBytes(data.tx);
       if (typeof data.rateRx === "number") document.getElementById("rate-rx").textContent = formatRate(data.rateRx);
       if (typeof data.rateTx === "number") document.getElementById("rate-tx").textContent = formatRate(data.rateTx);
-    } else if (msg.type === "services") {
+      break;
+    case "services":
       createServiceCards(msg.data);
-    } else if (msg.type === "service" && msg.name) {
-      const el = document.getElementById("service-" + msg.name.toLowerCase());
-      if (el) {
-        if (data.status === "up") {
-          el.textContent = "Online";
-          el.className = "text-success small";
-        } else {
-          el.textContent = "Offline";
-          el.className = "text-danger small";
+      break;
+    case "service":
+      if (msg.name) {
+        const el = document.getElementById("service-" + msg.name.toLowerCase());
+        if (el) {
+          el.textContent = data.status === "up" ? "Online" : "Offline";
+          el.className = (data.status === "up" ? "text-success" : "text-danger") + " small";
         }
       }
-    }
-  };
+      break;
+    case "storage":
+      updateStorage(msg.data);
+      break;
+  }
+};
 
-  eventSource.onerror = function(err) {
-    console.error("EventSource failed:", err);
-  };
-  </script>
-  <script src="/static/bootstrap.bundle.min.js"></script>
+eventSource.onerror = function(err) {
+  console.error("EventSource failed:", err);
+};
+</script>
+<script src="/static/bootstrap.bundle.min.js"></script>
+<footer class="text-center mt-4 mb-2 small text-secondary">
+  <hr>
+  <div>
+    <a href="https://github.com/claudio-santos/web-dash-stats" target="_blank" rel="noopener" aria-label="GitHub">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-github align-text-bottom" viewBox="0 0 16 16">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.19 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+    </a>
+  </div>
+</footer>
 </body>
 </html>

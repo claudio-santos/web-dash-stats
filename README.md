@@ -6,7 +6,7 @@ A minimal real-time web dashboard for monitoring system and custom service statu
 
 ## Features
 
-- Real-time CPU, memory, and network usage updates
+- Real-time CPU, memory, network, storage, and uptime updates
 - Live service status checks (configurable via YAML)
 - Powered by **Server-Sent Events (SSE)** for instant UI updates
 - Responsive, dark-themed UI with **Bootstrap 5**
@@ -63,6 +63,7 @@ go get github.com/shirou/gopsutil/v4/cpu
 go get github.com/shirou/gopsutil/v4/mem
 go get github.com/shirou/gopsutil/v4/net
 go get github.com/shirou/gopsutil/v4/host
+go get github.com/shirou/gopsutil/v4/disk
 go get gopkg.in/yaml.v3
 ```
 
@@ -70,6 +71,7 @@ go get gopkg.in/yaml.v3
 
 - Place Bootstrap CSS and JS files in the `static/` directory.
 - Place `index.html` inside the `templates/` directory.
+- Make sure your `config.yaml` is in the project root.
 
 ---
 
